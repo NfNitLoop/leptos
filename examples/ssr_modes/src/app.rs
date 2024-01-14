@@ -15,22 +15,34 @@ pub fn App() -> impl IntoView {
         <Stylesheet id="leptos" href="/pkg/ssr_modes.css"/>
         <Title text="Welcome to Leptos"/>
 
+        <nav style="display: flex; gap: 1em;">
+            <a href="/">"/(home default/out-of-order)"</a>
+            <a href="/home/in-order">"/home/in-order"</a>
+            <a href="/home/async">"/home/async"</a>
+            <a href="/home/partially-blocked">"/home/partially-blocked"</a>
+        </nav>
+
+        <p>"Disable javascript to see what async renders server-side vs. others."</p>
+
         <Router fallback>
             <main>
                 <Routes>
                     // We’ll load the home page with out-of-order streaming and <Suspense/>
                     <Route path="" view=HomePage/>
+                    <Route path="/home/in-order" view=HomePage ssr=SsrMode::InOrder/>
+                    <Route path="/home/async" view=HomePage ssr=SsrMode::Async/>
+                    <Route path="/home/partially-blocked" view=HomePage ssr=SsrMode::PartiallyBlocked/>
 
                     // We'll load the posts with async rendering, so they can set
                     // the title and metadata *after* loading the data
                     <Route
                         path="/post/:id"
-                        view=Post
+                        view=PostPage
                         ssr=SsrMode::Async
                     />
                     <Route
                         path="/post_in_order/:id"
-                        view=Post
+                        view=PostPage
                         ssr=SsrMode::InOrder
                     />
                 </Routes>
@@ -43,15 +55,12 @@ pub fn App() -> impl IntoView {
 fn HomePage() -> impl IntoView {
     // load the posts
     let posts =
-        create_resource(|| (), |_| async { list_post_metadata().await });
+        create_blocking_resource(|| (), |_| async { list_post_metadata().await });
     let posts_view = move || {
         posts.and_then(|posts| {
                         posts.iter()
                             .map(|post| view! {
-                                <li>
-                                    <a href=format!("/post/{}", post.id)>{&post.title}</a> "|"
-                                    <a href=format!("/post_in_order/{}", post.id)>{&post.title}"(in order)"</a>
-                                </li>
+                                <Post id=post.id />
                             })
                             .collect_view()
                     })
@@ -60,7 +69,7 @@ fn HomePage() -> impl IntoView {
     view! {
         <h1>"My Great Blog"</h1>
         <Suspense fallback=move || view! { <p>"Loading posts..."</p> }>
-            <ul>{posts_view}</ul>
+            {posts_view}
         </Suspense>
     }
 }
@@ -71,17 +80,31 @@ pub struct PostParams {
 }
 
 #[component]
-fn Post() -> impl IntoView {
+fn PostPage() -> impl IntoView {
     let query = use_params::<PostParams>();
     let id = move || {
         query.with(|q| {
             q.as_ref().map(|q| q.id).map_err(|_| PostError::InvalidId)
         })
     };
-    let post = create_resource(id, |id| async move {
+
+    let view = move || {
+        id().map(|id| view! {
+            <Post id />
+        })
+    };
+        
+
+    view! {
+        {view}
+    }
+}
+
+#[component]
+fn Post(id: usize) -> impl IntoView {
+    let post = create_resource(|| (), move |_| async move {
         match id {
-            Err(e) => Err(e),
-            Ok(id) => get_post(id)
+            id => get_post(id)
                 .await
                 .map(|data| data.ok_or(PostError::PostNotFound))
                 .map_err(|_| PostError::ServerError)
@@ -99,8 +122,8 @@ fn Post() -> impl IntoView {
                 // since we're using async rendering for this page,
                 // this metadata should be included in the actual HTML <head>
                 // when it's first served
-                <Title text=post.title.clone()/>
-                <Meta name="description" content=post.content.clone()/>
+                // <Title text=post.title.clone()/>
+                // <Meta name="description" content=post.content.clone()/>
             }
         })
     };
@@ -121,8 +144,34 @@ fn Post() -> impl IntoView {
                     </div>
                 }
             }>
+                <div class="post" style="border: 1px solid black; margin-bottom: 1em;">
                 {post_view}
+                <Comments post_id=id />
+                </div>
             </ErrorBoundary>
+        </Suspense>
+    }
+}
+
+#[component]
+fn Comments(post_id: usize) -> impl IntoView {
+    let comments = create_resource(|| (), move |_| async move {
+         get_comments(post_id)
+            .await
+            .map_err(|_| PostError::ServerError)
+    });
+
+    let view = move || comments.and_then(|comments| {
+        view! {
+            <div style="border: 1px dashed red;">
+                <p>"Found " {comments.len()} " comments."</p>
+            </div>
+        }
+    });
+
+    view! {
+        <Suspense>
+            {view}
         </Suspense>
     }
 }
@@ -173,7 +222,9 @@ pub struct PostMetadata {
 
 #[server]
 pub async fn list_post_metadata() -> Result<Vec<PostMetadata>, ServerFnError> {
+    eprintln!("list_post_metadata: start");
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    eprintln!("list_post_metadata: end");
     Ok(POSTS
         .iter()
         .map(|data| PostMetadata {
@@ -185,6 +236,22 @@ pub async fn list_post_metadata() -> Result<Vec<PostMetadata>, ServerFnError> {
 
 #[server]
 pub async fn get_post(id: usize) -> Result<Option<Post>, ServerFnError> {
+    eprintln!("get_post: start");
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    eprintln!("get_post: end");
     Ok(POSTS.iter().find(|post| post.id == id).cloned())
+}
+
+
+
+async fn get_comments(post_id: usize) -> Result<Vec<Comment>, ServerFnError> {
+    eprintln!("get_comments: start");
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    eprintln!("get_comments: end");
+    Ok(vec![])
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct Comment {
+    // unused
 }
